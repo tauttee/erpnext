@@ -27,6 +27,7 @@ frappe.query_reports["Sales Analytics"] = {
 			options: [
 				{ "value": "Value", "label": __("Value") },
 				{ "value": "Quantity", "label": __("Quantity") },
+				{ "value": "Weight", "label": "Weight" },
 			],
 			default: "Value",
 			reqd: 1
@@ -52,6 +53,13 @@ frappe.query_reports["Sales Analytics"] = {
 			options: "Company",
 			default: frappe.defaults.get_user_default("Company"),
 			reqd: 1
+		},
+		{
+			fieldname: "branch",
+			label: __("Branch"),
+			fieldtype: "Link",
+			options: "Branch",
+			default: frappe.defaults.get_user_default("Branch"),
 		},
 		{
 			fieldname: "range",

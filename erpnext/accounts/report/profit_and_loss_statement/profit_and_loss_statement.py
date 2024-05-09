@@ -7,14 +7,15 @@ from frappe import _
 from frappe.utils import flt
 from erpnext.accounts.report.financial_statements import (get_period_list, get_columns, get_data)
 
+
 def jmann_execute(filters=None):
 	period_list = get_period_list(filters.from_fiscal_year, filters.to_fiscal_year,
 		filters.periodicity, filters.accumulated_values, filters.company)
 
-	abbr = frappe.db.get_value('Company', filters.get('company'), 'abbr')
 	income = get_data(filters.company, "Income", "Credit", period_list, filters = filters,
 		accumulated_values=filters.accumulated_values,
-		ignore_closing_entries=True, ignore_accumulated_values_for_fy= True)
+		ignore_closing_entries=True, ignore_accumulated_values_for_fy= True,
+  		include_zero_balances=True)
 	
 	def get_children(data_list, name):
 		return [child for child in data_list \
@@ -51,33 +52,58 @@ def jmann_execute(filters=None):
 	
 	expense = get_data(filters.company, "Expense", "Debit", period_list, filters=filters,
 		accumulated_values=filters.accumulated_values,
-		ignore_closing_entries=True, ignore_accumulated_values_for_fy= True)
-	
+		ignore_closing_entries=True, ignore_accumulated_values_for_fy= True,
+		include_zero_balances=True)
+
 	direct_expenses_parent = frappe.db.sql('''
-		select name from `tabAccount` where name like "%direct expenses%"
-		and name not like "%indirect%" and company = "{}"'''.format(filters.get('company')))[0][0]
+		select 
+  			name 
+     	from `tabAccount` 
+      	where 
+       		name like "%direct expenses%"
+			and name not like "%indirect%" 
+   			and company = "{}"
+		order by account_name desc
+    	'''.format(filters.get('company')))[0][0]
 	indirect_expenses_parent = frappe.db.sql('''
-		select name from `tabAccount` where name like "%indirect expenses%"
-		and company = "{}"'''.format(filters.get('company')))[0][0]
+		select 
+  			name 
+     	from `tabAccount` 
+      	where 
+       		name like "%indirect expenses%"
+			and company = "{}"
+		order by account_name desc
+		'''.format(filters.get('company')))[0][0]
+	valuations_expenses_parent = frappe.db.sql('''
+		select name from `tabAccount` where account_number = 5125
+		and company = "{}"'''.format(filters.get('company')))
+	valuations_expenses_parent = valuations_expenses_parent[0][0] if valuations_expenses_parent else None
 	direct_expenses = []
 	indirect_expenses = []
-	
+	valuation_expenses = []
+
 	direct_expenses_account = None
 	indirect_expenses_account = None
+	valuation_expenses_account = None
 
 	for i in expense:
 		if i.get('account') == direct_expenses_parent:
 			direct_expenses_account = i
 		if i.get('account') == indirect_expenses_parent:
 			indirect_expenses_account = i
+		if i.get('account') == valuations_expenses_parent:
+			valuation_expenses_account = i
+
 		if i.get('parent_account') == direct_expenses_parent:
 			direct_expenses.append(i)
 			direct_expenses.extend(get_children(expense, i.get('account')))
 		if i.get('parent_account') == indirect_expenses_parent:
 			indirect_expenses.append(i)
 			indirect_expenses.extend(get_children(expense, i.get('account')))
+		if i.get('parent_account') == valuations_expenses_parent:
+			valuation_expenses.append(i)
+			valuation_expenses.extend(get_children(expense, i.get('account')))
 
-	
 	period_keys = [i.get('key') for i in period_list]
 	gross_profit = {
 		'account': 'Gross Profit',
@@ -97,16 +123,34 @@ def jmann_execute(filters=None):
 		direct_expenses.insert(0, direct_expenses_account)
 	if indirect_expenses_account:
 		indirect_expenses.insert(0, indirect_expenses_account)
-	
+	if valuation_expenses_account:
+		valuation_expenses.insert(0, valuation_expenses_account)
+
 	net_profit_loss = get_net_profit_loss(income, expense, period_list, filters.company, filters.presentation_currency)
 
+	profit_before_valuations  = frappe._dict({
+		"account_name": "'" + _("Profit Before Valuations") + "'",
+		"account": "'" + _("Profit for the year") + "'",
+  		"currency": filters.presentation_currency or frappe.get_cached_value('Company',  filters.company,  "default_currency")
+	})
+	total_valuation_expenses = frappe._dict({})
+	for period in period_list:
+		key = period.key
+		total_valuation_expenses[key] = sum([i[key] for i in list(filter(lambda x: x.get('indent', 1) == 1, valuation_expenses))])
+		profit_before_valuations[key] = total_valuation_expenses[key] + net_profit_loss[key]
+
 	data = []
+	sorted(direct_expenses, key=lambda x: x.get('account_name'))
+	sorted(indirect_expenses, key=lambda x: x.get('account_name'))
 	data.extend(direct_income or [])
 	data.extend(direct_expenses or [])
 	data.append(gross_profit)
 	data.append({})
 	data.extend(indirect_income or [])
 	data.extend(indirect_expenses or [])
+	if net_profit_loss:
+		data.append(profit_before_valuations)
+	data.extend(valuation_expenses or [])
 	if net_profit_loss:
 		data.append(net_profit_loss)
 
@@ -141,6 +185,7 @@ def jmann_execute(filters=None):
 
 	return columns, data, None, chart
 
+
 def execute(filters=None):
 	from goprime.config.utils import get_features
 	config = get_features()
@@ -157,7 +202,7 @@ def execute(filters=None):
 
 	expense = get_data(filters.company, "Expense", "Debit", period_list, filters=filters,
 		accumulated_values=filters.accumulated_values,
-		ignore_closing_entries=True, ignore_accumulated_values_for_fy= True)
+		ignore_closing_entries=True, ignore_accumulated_values_for_fy= True,include_zero_balances=True)
 
 	net_profit_loss = get_net_profit_loss(income, expense, period_list, filters.company, filters.presentation_currency)
 
